@@ -1,0 +1,150 @@
+<!doctype html>
+<!--
+  치어 모아 — Google Cast receiver. The TV loads this page and plays whatever the phone sends on the custom
+  namespace below, using the platforms' own embedded players (same as the phone; never the video files).
+  Messages (JSON): {"type":"play","platform":"youtube"|"tiktok"|"instagram","id":"<video id or reel shortcode>"},
+  {"type":"stop"}. It answers {"type":"ended"} and {"type":"error","code":…}.
+  Testing in a browser (no Cast device): ?youtube=<id>, ?tiktok=<id> or ?instagram=<code>.
+  Published from CastReceiver/ to https://mikebenfield.github.io/cheermoa-cast/ (see README.md there).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>치어 모아</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage iframe, #stage #yt { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #idle {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #f3ead8; font: 600 64px/1.2 "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; letter-spacing: 0.05em;
+    background: radial-gradient(circle at 50% 40%, #1c2a4a, #0b1120 70%);
+  }
+  #idle small { display: block; font-size: 24px; font-weight: 400; opacity: 0.6; margin-top: 12px; letter-spacing: 0; }
+  #message { position: fixed; left: 0; right: 0; bottom: 48px; text-align: center; color: #f3ead8;
+             font: 28px sans-serif; text-shadow: 0 2px 8px #000; display: none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="idle"><div>치어 모아<small>Ready to cast</small></div></div>
+<div id="message"></div>
+<script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+<script>
+const NAMESPACE = 'urn:x-cast:com.michaelbenfield.cheermoa';
+const stage = document.getElementById('stage');
+const idle = document.getElementById('idle');
+const message = document.getElementById('message');
+let ytPlayer = null;
+let send = function () {};
+
+function show(text) {
+  message.textContent = text;
+  message.style.display = text ? 'block' : 'none';
+}
+
+function clear() {
+  if (ytPlayer) { try { ytPlayer.destroy(); } catch (e) {} ytPlayer = null; }
+  stage.innerHTML = '';
+  show('');
+}
+
+function frame(src) {
+  const f = document.createElement('iframe');
+  f.src = src;
+  f.allow = 'autoplay; encrypted-media; fullscreen';
+  f.referrerPolicy = 'strict-origin-when-cross-origin';
+  stage.appendChild(f);
+  return f;
+}
+
+// YouTube: the IFrame API, so the receiver knows when a video ends or can't be embedded.
+let ytReady = null;
+function loadYouTubeAPI() {
+  if (!ytReady) {
+    ytReady = new Promise(function (resolve) {
+      window.onYouTubeIframeAPIReady = resolve;
+      const s = document.createElement('script');
+      s.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(s);
+    });
+  }
+  return ytReady;
+}
+
+async function playYouTube(id) {
+  await loadYouTubeAPI();
+  const host = document.createElement('div');
+  host.id = 'yt';
+  stage.appendChild(host);
+  ytPlayer = new YT.Player('yt', {
+    videoId: id,
+    playerVars: { autoplay: 1, playsinline: 1, rel: 0, controls: 0, modestbranding: 1, iv_load_policy: 3 },
+    events: {
+      onReady: function (e) { e.target.unMute(); e.target.playVideo(); },
+      onStateChange: function (e) { if (e.data === YT.PlayerState.ENDED) send({ type: 'ended' }); },
+      // 101/150: the uploader turned off embedding; it can only play on YouTube itself.
+      onError: function (e) {
+        show(e.data === 101 || e.data === 150 ? 'This video can only be played on YouTube' : 'YouTube couldn’t play this video');
+        send({ type: 'error', code: e.data });
+      }
+    }
+  });
+}
+
+function playTikTok(id) {
+  const f = frame('https://www.tiktok.com/player/v1/' + encodeURIComponent(id) +
+    '?autoplay=1&loop=1&music_info=0&description=0&rel=0&controls=0&progress_bar=1&play_button=0' +
+    '&volume_control=0&fullscreen_button=0&timestamp=0&closed_caption=0&native_context_menu=0');
+  // TikTok's player only starts with sound when asked through its message API.
+  window.addEventListener('message', function onMessage(e) {
+    const d = e.data;
+    if (!d || !d['x-tiktok-player']) return;
+    if (d.type === 'onPlayerReady') {
+      f.contentWindow.postMessage({ 'x-tiktok-player': true, type: 'unMute' }, '*');
+      f.contentWindow.postMessage({ 'x-tiktok-player': true, type: 'play' }, '*');
+    }
+    if (d.type === 'onPlayerError') send({ type: 'error', code: 'tiktok' });
+  });
+}
+
+function playInstagram(code) {
+  frame('https://www.instagram.com/reel/' + encodeURIComponent(code) + '/embed/');
+}
+
+function play(platform, id) {
+  clear();
+  idle.style.display = 'none';
+  if (platform === 'youtube') playYouTube(id);
+  else if (platform === 'tiktok') playTikTok(id);
+  else if (platform === 'instagram') playInstagram(id);
+  else { idle.style.display = 'flex'; show('Unknown video'); }
+}
+
+function handle(m) {
+  if (!m || typeof m !== 'object') return;
+  if (m.type === 'play' && m.platform && m.id) play(m.platform, String(m.id));
+  if (m.type === 'stop') { clear(); idle.style.display = 'flex'; }
+}
+
+const onCast = typeof cast !== 'undefined' && /CrKey|Android TV|GoogleTV/i.test(navigator.userAgent);
+if (onCast) {
+  const context = cast.framework.CastReceiverContext.getInstance();
+  context.addCustomMessageListener(NAMESPACE, function (e) { handle(e.data); });
+  send = function (m) { try { context.sendCustomMessage(NAMESPACE, undefined, m); } catch (e) {} };
+  const options = new cast.framework.CastReceiverOptions();
+  options.disableIdleTimeout = true;
+  options.skipPlayersLoad = true;
+  options.customNamespaces = { [NAMESPACE]: cast.framework.system.MessageType.JSON };
+  context.start(options);
+} else {
+  // In a browser: ?youtube=<id>, ?tiktok=<id> or ?instagram=<code>.
+  const q = new URLSearchParams(location.search);
+  for (const platform of ['youtube', 'tiktok', 'instagram']) {
+    if (q.get(platform)) { play(platform, q.get(platform)); break; }
+  }
+}
+</script>
+</body>
+</html>
