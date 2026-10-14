@@ -2,8 +2,9 @@
 <!--
   치어 모아 — Google Cast receiver. The TV loads this page and plays whatever the phone sends on the custom
   namespace below, using the platforms' own embedded players (same as the phone; never the video files).
-  Messages (JSON): {"type":"play","platform":"youtube"|"tiktok"|"instagram","id":"<video id or reel shortcode>"},
-  {"type":"stop"}. It answers {"type":"ended"} and {"type":"error","code":…}.
+  Messages (JSON): {"type":"play","platform":"youtube"|"tiktok"|"instagram","id":"<video id or reel shortcode>","loop":bool},
+  {"type":"photo","id","index","count","data"} (a photo as base64 JPEG in pieces), {"type":"info",…} (Inbox review's
+  info bar), {"type":"stop"}. It answers {"type":"ended"} and {"type":"error","code":…}.
   Testing in a browser (no Cast device): ?youtube=<id>, ?tiktok=<id> or ?instagram=<code>.
   Published from CastReceiver/ to https://mikebenfield.github.io/cheermoa-cast/ (see README.md there).
 -->
@@ -15,6 +16,7 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   #stage { position: fixed; inset: 0; }
+  #stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   #stage iframe, #stage #yt { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   #idle {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -137,6 +139,20 @@ function play(platform, id) {
   else { idle.style.display = 'flex'; show('Unknown video'); }
 }
 
+// Photos live only on the phone, and a Cast message holds at most 64 KB, so the phone sends a photo as base64 JPEG
+// in pieces: {type:"photo", id, index, count, data}; it's shown once every piece has arrived.
+let photoParts = { id: null, parts: [] };
+function receivePhotoPart(m) {
+  if (photoParts.id !== m.id) photoParts = { id: m.id, parts: new Array(m.count) };
+  photoParts.parts[m.index] = m.data;
+  if (photoParts.parts.filter(function (p) { return p !== undefined; }).length < m.count) return;
+  clear();
+  idle.style.display = 'none';
+  const img = document.createElement('img');
+  img.src = 'data:image/jpeg;base64,' + photoParts.parts.join('');
+  stage.appendChild(img);
+}
+
 function escapeHTML(t) {
   return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
 }
@@ -158,6 +174,7 @@ function showInfo(m) {
 function handle(m) {
   if (!m || typeof m !== 'object') return;
   if (m.type === 'info') { showInfo(m); return; }
+  if (m.type === 'photo' && m.id && typeof m.data === 'string') { receivePhotoPart(m); return; }
   if (m.type === 'play') loop = !!m.loop;
   if (m.type === 'play' && m.platform && m.id) play(m.platform, String(m.id));
   if (m.type === 'stop') { clear(); idle.style.display = 'flex'; }
