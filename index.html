@@ -22,6 +22,15 @@
     background: radial-gradient(circle at 50% 40%, #1c2a4a, #0b1120 70%);
   }
   #idle small { display: block; font-size: 24px; font-weight: 400; opacity: 0.6; margin-top: 12px; letter-spacing: 0; }
+  /* Inbox review: who's tagged, over the bottom of the video; fades after a few seconds, back on every update. */
+  #info { position: fixed; left: 48px; right: 48px; bottom: 40px; padding: 18px 26px; border-radius: 18px;
+          background: rgba(11, 17, 32, 0.78); color: #f3ead8; font: 26px/1.35 "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+          opacity: 0; transition: opacity 0.6s; pointer-events: none; }
+  #info.shown { opacity: 1; }
+  #info .people { font-size: 34px; font-weight: 700; }
+  #info .people .suggested { font-weight: 400; opacity: 0.7; font-style: italic; }
+  #info .meta { font-size: 22px; opacity: 0.75; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #info .position { float: right; font-size: 22px; opacity: 0.6; }
   #message { position: fixed; left: 0; right: 0; bottom: 48px; text-align: center; color: #f3ead8;
              font: 28px sans-serif; text-shadow: 0 2px 8px #000; display: none; }
 </style>
@@ -30,6 +39,7 @@
 <div id="stage"></div>
 <div id="idle"><div>치어 모아<small>Ready to cast</small></div></div>
 <div id="message"></div>
+<div id="info"></div>
 <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 <script>
 const NAMESPACE = 'urn:x-cast:com.michaelbenfield.cheermoa';
@@ -37,6 +47,8 @@ const stage = document.getElementById('stage');
 const idle = document.getElementById('idle');
 const message = document.getElementById('message');
 let ytPlayer = null;
+let loop = false;   // Inbox review: replay a video instead of ending on black
+let infoTimer = null;
 let send = function () {};
 
 function show(text) {
@@ -83,7 +95,10 @@ async function playYouTube(id) {
     playerVars: { autoplay: 1, playsinline: 1, rel: 0, controls: 0, modestbranding: 1, iv_load_policy: 3 },
     events: {
       onReady: function (e) { e.target.unMute(); e.target.playVideo(); },
-      onStateChange: function (e) { if (e.data === YT.PlayerState.ENDED) send({ type: 'ended' }); },
+      onStateChange: function (e) {
+        if (e.data !== YT.PlayerState.ENDED) return;
+        if (loop) { e.target.seekTo(0, true); e.target.playVideo(); } else send({ type: 'ended' });
+      },
       // 101/150: the uploader turned off embedding; it can only play on YouTube itself.
       onError: function (e) {
         show(e.data === 101 || e.data === 150 ? 'This video can only be played on YouTube' : 'YouTube couldn’t play this video');
@@ -122,8 +137,28 @@ function play(platform, id) {
   else { idle.style.display = 'flex'; show('Unknown video'); }
 }
 
+function escapeHTML(t) {
+  return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+}
+
+// {type:"info", people:[{name, confirmed}], teams:[…], title, position:"12 of 63"}
+function showInfo(m) {
+  const info = document.getElementById('info');
+  const people = (m.people || []).map(function (p) {
+    return p.confirmed ? escapeHTML(p.name) : '<span class="suggested">' + escapeHTML(p.name) + '?</span>';
+  }).join(' · ');
+  info.innerHTML = (m.position ? '<span class="position">' + escapeHTML(m.position) + '</span>' : '') +
+    '<div class="people">' + (people || '<span class="suggested">Nobody tagged yet</span>') + '</div>' +
+    '<div class="meta">' + escapeHTML([(m.teams || []).join(', '), m.title || ''].filter(Boolean).join(' — ')) + '</div>';
+  info.classList.add('shown');
+  if (infoTimer) clearTimeout(infoTimer);
+  infoTimer = setTimeout(function () { info.classList.remove('shown'); }, 7000);
+}
+
 function handle(m) {
   if (!m || typeof m !== 'object') return;
+  if (m.type === 'info') { showInfo(m); return; }
+  if (m.type === 'play') loop = !!m.loop;
   if (m.type === 'play' && m.platform && m.id) play(m.platform, String(m.id));
   if (m.type === 'stop') { clear(); idle.style.display = 'flex'; }
 }
