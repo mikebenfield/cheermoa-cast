@@ -5,7 +5,8 @@
   Messages (JSON): {"type":"play","platform":"youtube"|"tiktok"|"instagram","id":"<video id or reel shortcode>","loop":bool,
   "url":"<the reel's video file, Instagram only>"} (Instagram's embed can't be started from a page it's framed in,
   so a reel plays from its file when the phone found one, else in the embed),
-  {"type":"photo","id","index","count","data"} (a photo as base64 JPEG in pieces), {"type":"info",…} (Inbox review's
+  {"type":"photo","id","index","count","data","note"?} (a photo as base64 JPEG in pieces; also the cover of a reel
+  Instagram only plays in its app, with a note), {"type":"info",…} (Inbox review's
   info bar), {"type":"stop"}. It answers {"type":"ended"} and {"type":"error","code":…}.
   Testing in a browser (no Cast device): ?youtube=<id>, ?tiktok=<id> or ?instagram=<code>[&url=<video file>].
   Published from CastReceiver/ to https://mikebenfield.github.io/cheermoa-cast/ (see README.md there).
@@ -22,7 +23,8 @@
   #stage iframe, #stage #yt, #stage video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
   #stage video { object-fit: contain; }
   /* Instagram's embed is a narrow page: a centered column, so the whole post shows. */
-  #stage iframe.instagram { left: 50%; width: 540px; margin-left: -270px; background: #fff; }
+  #stage iframe.instagram { left: 50%; width: 540px; height: 1250px; margin-left: -270px; background: #fff;
+                            transform-origin: top center; }
   #idle {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     color: #f3ead8; font: 600 64px/1.2 "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; letter-spacing: 0.05em;
@@ -38,7 +40,7 @@
   #info .people .suggested { font-weight: 400; opacity: 0.7; font-style: italic; }
   #info .meta { font-size: 22px; opacity: 0.75; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #info .position { float: right; font-size: 22px; opacity: 0.6; }
-  #message { position: fixed; left: 0; right: 0; bottom: 48px; text-align: center; color: #f3ead8;
+  #message { position: fixed; left: 0; right: 0; top: 40px; text-align: center; color: #f3ead8;
              font: 28px sans-serif; text-shadow: 0 2px 8px #000; display: none; }
 </style>
 </head>
@@ -132,7 +134,13 @@ function playTikTok(id) {
 }
 
 function playInstagram(code, url) {
-  if (!url) { frame('https://www.instagram.com/reel/' + encodeURIComponent(code) + '/embed/').className = 'instagram'; return; }
+  if (!url) {
+    // Instagram's embed page is ~1250 px tall at its 540 px width: scaled to fit the screen's height.
+    const f = frame('https://www.instagram.com/reel/' + encodeURIComponent(code) + '/embed/');
+    f.className = 'instagram';
+    f.style.transform = 'scale(' + Math.min(1, window.innerHeight / 1250) + ')';
+    return;
+  }
   const v = document.createElement('video');
   v.src = url;
   v.autoplay = true;
@@ -170,6 +178,7 @@ function receivePhotoPart(m) {
   const img = document.createElement('img');
   img.src = 'data:image/jpeg;base64,' + photoParts.parts.join('');
   stage.appendChild(img);
+  if (m.note) show(m.note);
 }
 
 function escapeHTML(t) {
