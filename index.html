@@ -7,7 +7,7 @@
   so a reel plays from its file when the phone found one, else in the embed),
   {"type":"photo","id","index","count","data","note"?} (a photo as base64 JPEG in pieces; also the cover of a reel
   Instagram only plays in its app, with a note), {"type":"info",…} (Inbox review's
-  info bar), {"type":"stop"}. It answers {"type":"ended"} and {"type":"error","code":…}.
+  info bar), {"type":"loading"} (the phone is looking up the next video: stop the current one), {"type":"stop"}. It answers {"type":"ended"} and {"type":"error","code":…}.
   Testing in a browser (no Cast device): ?youtube=<id>, ?tiktok=<id> or ?instagram=<code>[&url=<video file>].
   Published from CastReceiver/ to https://mikebenfield.github.io/cheermoa-cast/ (see README.md there).
 -->
@@ -206,6 +206,7 @@ function handle(m) {
   if (m.type === 'play') loop = !!m.loop;
   if (m.type === 'play' && m.platform && m.id) play(m.platform, String(m.id), typeof m.url === 'string' ? m.url : null);
   if (m.type === 'stop') { clear(); idle.style.display = 'flex'; }
+  if (m.type === 'loading') { clear(); idle.style.display = 'none'; show('Loading…'); }
 }
 
 const onCast = typeof cast !== 'undefined' && /CrKey|Android TV|GoogleTV/i.test(navigator.userAgent);
